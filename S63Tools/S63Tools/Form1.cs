@@ -8,7 +8,7 @@ namespace S63Tools
     public partial class Form1 : Form
     {
         private readonly int _zipHeader = 0x04034b50; // 'P', 'K', 3, 4
-        private byte[] _hardwareId;
+        private byte[]? _hardwareId;
 
         public Form1()
         {
@@ -20,8 +20,8 @@ namespace S63Tools
             var hwId = S63Tools.HackUserPermit(textBoxUserPermit.Text, out var mId, out var keyBytes);
             _hardwareId = hwId;
             labelMId.Text = $"x{mId:X4} ({(char)(mId >> 8)}{(char)(mId & 0xff)})";
-            labelMKey.Text = Encoding.ASCII.GetString(keyBytes);
-            labelHwId.Text = Encoding.ASCII.GetString(hwId);
+            labelMKey.Text = Encoding.ASCII.GetString(keyBytes ?? Array.Empty<byte>());
+            labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
         }
 
         private void buttonDecryptCells_Click(object sender, EventArgs e)
@@ -53,7 +53,7 @@ namespace S63Tools
                     continue;
                 }
 
-                byte[] zipData = null;
+                byte[]? zipData = null;
                 var data = File.ReadAllBytes(file);
                 string fn = Path.GetFileNameWithoutExtension(file);
                 if (permits.TryGetValue(fn, out var cellKeys))

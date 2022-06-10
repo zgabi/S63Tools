@@ -217,7 +217,7 @@ public class S63Tools
         return true;
     }
 
-    public static byte[] HackUserPermit(string userPermit, out ushort mId, out byte[] keyBytes)
+    public static byte[]? HackUserPermit(string userPermit, out ushort mId, out byte[]? keyBytes)
     {
         var permit = Encoding.ASCII.GetBytes(userPermit);
         uint crc = Crc32.Compute(permit.AsSpan(0, 16));
@@ -231,13 +231,6 @@ public class S63Tools
 
         Utf8Parser.TryParse(permit.AsSpan(24, 4), out mId, out _, 'X');
 
-        byte[] key = new byte[5];
-        var hex = new[]
-        {
-            (byte) '0', (byte) '1', (byte) '2', (byte) '3', (byte) '4', (byte) '5', (byte) '6', (byte) '7',
-            (byte) '8', (byte) '9', (byte) 'A', (byte) 'B', (byte) 'C', (byte) 'D', (byte) 'E', (byte) 'F'
-        };
-
         Span<byte> hwIdBlockDef = stackalloc byte[8];
         for (int i = 0; i < hwIdBlockDef.Length; i++)
         {
@@ -245,32 +238,82 @@ public class S63Tools
             hwIdBlockDef[i] = b;
         }
 
-        Span<byte> hwIdBlock = stackalloc byte[8];
-        var blow = new BlowFish();
-        for (int keyI = 0; keyI < 0x100000; keyI++)
+        var keyFinder = new KeyFinder(hwIdBlockDef);
+        keyFinder.Start();
+
+        keyBytes = keyFinder.FoundKey;
+        return keyFinder.FoundHwId;
+    }
+
+    private class KeyFinder
+    {
+        private readonly byte[] _hwIdBlockDef;
+        private int _i;
+
+        public volatile byte[]? FoundKey;
+        public volatile byte[]? FoundHwId;
+
+        private static readonly byte[] Hex = {
+            (byte) '0', (byte) '1', (byte) '2', (byte) '3', (byte) '4', (byte) '5', (byte) '6', (byte) '7',
+            (byte) '8', (byte) '9', (byte) 'A', (byte) 'B', (byte) 'C', (byte) 'D', (byte) 'E', (byte) 'F'
+        };
+
+        public KeyFinder(Span<byte> hwIdBlockDef)
         {
-            key[4] = hex[keyI & 0xf];
-            key[3] = hex[(keyI >> 4) & 0xf];
-            key[2] = hex[(keyI >> 8) & 0xf];
-            key[1] = hex[(keyI >> 12) & 0xf];
-            key[0] = hex[(keyI >> 16) & 0xf];
-
-            blow.SetupKey(key);
-
-            hwIdBlockDef.CopyTo(hwIdBlock);
-            blow.DecryptCBC8(hwIdBlock);
-
-            if (hwIdBlock[5] != 3 || hwIdBlock[6] != 3 || hwIdBlock[7] != 3)
-            {
-                continue;
-            }
-
-            hwIdBlockDef = hwIdBlock;
-            break;
+            _hwIdBlockDef = hwIdBlockDef.ToArray();
         }
 
-        keyBytes = key;
-        return hwIdBlockDef.Slice(0, 5).ToArray();
+        private void ThreadFunc()
+        {
+            var key = new byte[5];
+            Span<byte> hwIdBlock = stackalloc byte[8];
+            var blow = new BlowFish();
+
+            while (true)
+            {
+                int i = Interlocked.Increment(ref _i) - 1;
+                if (i >= 0x100000 || FoundKey != null)
+                {
+                    break;
+                }
+
+                key[4] = Hex[i & 0xf];
+                key[3] = Hex[(i >> 4) & 0xf];
+                key[2] = Hex[(i >> 8) & 0xf];
+                key[1] = Hex[(i >> 12) & 0xf];
+                key[0] = Hex[(i >> 16) & 0xf];
+
+                blow.SetupKey5(key);
+
+                _hwIdBlockDef.CopyTo(hwIdBlock);
+                blow.DecryptCBC8(hwIdBlock);
+
+                if (hwIdBlock[5] != 3 || hwIdBlock[6] != 3 || hwIdBlock[7] != 3)
+                {
+                    continue;
+                }
+
+                FoundKey = key;
+                FoundHwId = hwIdBlock.Slice(0, 5).ToArray();
+                break;
+            }
+        }
+
+        public void Start()
+        {
+            var threads = new List<Thread>();
+            for (int i = 0; i < Environment.ProcessorCount; i++)
+            {
+                var t = new Thread(ThreadFunc);
+                threads.Add(t);
+                t.Start();
+            }
+
+            foreach (var thread in threads)
+            {
+                thread.Join();
+            }
+        }
     }
 
     public static void LoadPermit(string permitPath, Dictionary<string, (byte[], byte[])> permits, byte[][] hardwareIds)

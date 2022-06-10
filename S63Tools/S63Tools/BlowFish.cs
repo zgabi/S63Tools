@@ -456,10 +456,88 @@ public sealed class BlowFish : IDisposable
         for (var i = 0; i < 18; i++)
         {
             var d = (uint) ((((((cipherKey[j % cipherKey.Length] * 256) + cipherKey[(j + 1) % cipherKey.Length]) *
-                               256) + cipherKey[(j + 2) % cipherKey.Length]) * 256) +
-                            cipherKey[(j + 3) % cipherKey.Length]);
+                              256) + cipherKey[(j + 2) % cipherKey.Length]) * 256) +
+                           cipherKey[(j + 3) % cipherKey.Length]);
             _bfP[i] ^= d;
             j = (j + 4) % cipherKey.Length;
+        }
+
+        _xlPar = 0;
+        _xrPar = 0;
+        for (var i = 0; i < 18; i += 2)
+        {
+            Encipher();
+            _bfP[i] = _xlPar;
+            _bfP[i + 1] = _xrPar;
+        }
+
+        for (var i = 0; i < 256; i += 2)
+        {
+            Encipher();
+            _bfS0[i] = _xlPar;
+            _bfS0[i + 1] = _xrPar;
+        }
+
+        for (var i = 0; i < 256; i += 2)
+        {
+            Encipher();
+            _bfS1[i] = _xlPar;
+            _bfS1[i + 1] = _xrPar;
+        }
+
+        for (var i = 0; i < 256; i += 2)
+        {
+            Encipher();
+            _bfS2[i] = _xlPar;
+            _bfS2[i + 1] = _xrPar;
+        }
+
+        for (var i = 0; i < 256; i += 2)
+        {
+            Encipher();
+            _bfS3[i] = _xlPar;
+            _bfS3[i + 1] = _xrPar;
+        }
+    }
+
+    public unsafe void SetupKey5(ReadOnlySpan<byte> cipherKey)
+    {
+        SetupP.CopyTo(_bfP.AsSpan());
+
+        // set up the S blocks
+        SetupS0.CopyTo(_bfS0.AsSpan());
+        SetupS1.CopyTo(_bfS1.AsSpan());
+        SetupS2.CopyTo(_bfS2.AsSpan());
+        SetupS3.CopyTo(_bfS3.AsSpan());
+
+        var j = 0;
+        fixed (byte* pck = &cipherKey.GetPinnableReference())
+        {
+            uint d0 = (uint)(((pck[0] * 256 + pck[1]) * 256 + pck[2]) * 256 + pck[3]);
+            uint d1 = (uint)(((pck[1] * 256 + pck[2]) * 256 + pck[3]) * 256 + pck[4]);
+            uint d2 = (uint)(((pck[2] * 256 + pck[3]) * 256 + pck[4]) * 256 + pck[0]);
+            uint d3 = (uint)(((pck[3] * 256 + pck[4]) * 256 + pck[0]) * 256 + pck[1]);
+            uint d4 = (uint)(((pck[4] * 256 + pck[0]) * 256 + pck[1]) * 256 + pck[2]);
+
+            var p = _bfP;
+            p[0] ^= d0;
+            p[1] ^= d4;
+            p[2] ^= d3;
+            p[3] ^= d2;
+            p[4] ^= d1;
+            p[5] ^= d0;
+            p[6] ^= d4;
+            p[7] ^= d3;
+            p[8] ^= d2;
+            p[9] ^= d1;
+            p[10] ^= d0;
+            p[11] ^= d4;
+            p[12] ^= d3;
+            p[13] ^= d2;
+            p[14] ^= d1;
+            p[15] ^= d0;
+            p[16] ^= d4;
+            p[17] ^= d3;
         }
 
         _xlPar = 0;
@@ -600,12 +678,22 @@ public sealed class BlowFish : IDisposable
     private void Encipher()
     {
         _xlPar ^= _bfP[0];
-        for (uint i = 0; i < 16; i += 2)
-        {
-            _xrPar = Round(_xrPar, _xlPar, i + 1);
-            _xlPar = Round(_xlPar, _xrPar, i + 2);
-        }
-
+        _xrPar = Round(_xlPar) ^ _bfP[1] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[2] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[3] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[4] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[5] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[6] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[7] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[8] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[9] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[10] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[11] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[12] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[13] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[14] ^ _xlPar;
+        _xrPar = Round(_xlPar) ^ _bfP[15] ^ _xrPar;
+        _xlPar = Round(_xrPar) ^ _bfP[16] ^ _xlPar;
         _xrPar ^= _bfP[17];
 
         // swap the blocks
@@ -632,7 +720,9 @@ public sealed class BlowFish : IDisposable
     }
 
     private uint Round(uint a, uint b, uint n) => (((_bfS0[(b >> 24) & 0xff] + _bfS1[(b >> 16) & 0xff]) ^ _bfS2[(b >> 8) & 0xff]) + _bfS3[b & 0xff]) ^ _bfP[n] ^ a;
-
+    
+    private uint Round(uint b) => ((_bfS0[(b >> 24) & 0xff] + _bfS1[(b >> 16) & 0xff]) ^ _bfS2[(b >> 8) & 0xff]) + _bfS3[b & 0xff];
+    
     private void Dispose(bool disposing)
     {
         if (!IsDisposed)
