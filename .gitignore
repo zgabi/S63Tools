@@ -1,0 +1,8 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/S63Tools/.vs
+/S63Tools/S63Tools/obj
+/S63Tools/S63Tools/bin
+*.user
