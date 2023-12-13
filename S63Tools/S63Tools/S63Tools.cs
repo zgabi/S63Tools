@@ -1,15 +1,18 @@
-﻿using System;
-using System.Buffers;
+﻿using System.Buffers;
 using System.Buffers.Binary;
 using System.Buffers.Text;
-using System.Collections.Generic;
-using System.IO;
+using System.Diagnostics;
 using System.Text;
 
 namespace S63Tools;
 
 public class S63Tools
 {
+    private static readonly byte[] Hex = {
+        (byte) '0', (byte) '1', (byte) '2', (byte) '3', (byte) '4', (byte) '5', (byte) '6', (byte) '7',
+        (byte) '8', (byte) '9', (byte) 'A', (byte) 'B', (byte) 'C', (byte) 'D', (byte) 'E', (byte) 'F'
+    };
+
     public static string CreateUserPermit(byte[] hwId, byte[] key, ushort mId)
     {
         if (hwId.Length != 5)
@@ -238,11 +241,64 @@ public class S63Tools
             hwIdBlockDef[i] = b;
         }
 
+        long t = Stopwatch.GetTimestamp();
         var keyFinder = new KeyFinder(hwIdBlockDef);
         keyFinder.Start();
 
+        var elapsed = Stopwatch.GetElapsedTime(t);
+        Debug.WriteLine("elapsed: " + elapsed);
+
         keyBytes = keyFinder.FoundKey;
         return keyFinder.FoundHwId;
+    }
+
+    public static byte[]? HackCellPermit(string permitPath)
+    {
+        var lines = File.ReadAllLines(permitPath);
+        string cellPermit = null;
+        foreach (string line in lines)
+        {
+            if (line.StartsWith(':'))
+            {
+                continue;
+            }
+
+            var parts = line.Split(',');
+            if (parts.Length > 2)
+            {
+                cellPermit = parts[0];
+            }
+        }
+
+        if (cellPermit != null)
+        {
+            var permit = Encoding.ASCII.GetBytes(cellPermit);
+            uint crc = Crc32.Compute(permit.AsSpan(0, 48));
+
+            Span<byte> blockCrc = stackalloc byte[8];
+            Span<byte> block1 = stackalloc byte[8];
+            Span<byte> block2 = stackalloc byte[8];
+            for (int i = 0; i < 8; i++)
+            {
+                Utf8Parser.TryParse(permit.AsSpan(48 + i * 2, 2), out byte b, out _, 'X');
+                blockCrc[i] = b;
+                Utf8Parser.TryParse(permit.AsSpan(16 + i * 2, 2), out b, out _, 'X');
+                block1[i] = b;
+                Utf8Parser.TryParse(permit.AsSpan(32 + i * 2, 2), out b, out _, 'X');
+                block2[i] = b;
+            }
+
+            long t = Stopwatch.GetTimestamp();
+            var hardwareIdFinder = new HardwareIdFinder(blockCrc, block1, block2, crc);
+            hardwareIdFinder.Start();
+
+            var elapsed = Stopwatch.GetElapsedTime(t);
+            Debug.WriteLine("elapsed: " + elapsed);
+
+            return hardwareIdFinder.FoundHwId;
+        }
+
+        throw new Exception("Failed to decrypt the permits.");
     }
 
     private class KeyFinder
@@ -252,11 +308,6 @@ public class S63Tools
 
         public volatile byte[]? FoundKey;
         public volatile byte[]? FoundHwId;
-
-        private static readonly byte[] Hex = {
-            (byte) '0', (byte) '1', (byte) '2', (byte) '3', (byte) '4', (byte) '5', (byte) '6', (byte) '7',
-            (byte) '8', (byte) '9', (byte) 'A', (byte) 'B', (byte) 'C', (byte) 'D', (byte) 'E', (byte) 'F'
-        };
 
         public KeyFinder(Span<byte> hwIdBlockDef)
         {
@@ -295,6 +346,99 @@ public class S63Tools
 
                 FoundKey = key;
                 FoundHwId = hwIdBlock.Slice(0, 5).ToArray();
+                break;
+            }
+        }
+
+        public void Start()
+        {
+            var threads = new List<Thread>();
+            for (int i = 0; i < Environment.ProcessorCount; i++)
+            {
+                var t = new Thread(ThreadFunc);
+                threads.Add(t);
+                t.Start();
+            }
+
+            foreach (var thread in threads)
+            {
+                thread.Join();
+            }
+        }
+    }
+
+    private class HardwareIdFinder
+    {
+        private readonly byte[] _blockCrc;
+        private readonly uint _crc;
+        private readonly byte[] _block1;
+        private readonly byte[] _block2;
+        private int _i;
+
+        public volatile byte[]? FoundHwId;
+
+        public HardwareIdFinder(Span<byte> blockCrc, Span<byte> block1, Span<byte> block2, uint crc)
+        {
+            _crc = crc;
+            _blockCrc = blockCrc.ToArray();
+            _block1 = block1.ToArray();
+            _block2 = block2.ToArray();
+        }
+
+        private void ThreadFunc()
+        {
+            var hwId = new byte[5];
+
+            Span<byte> hwId6 = stackalloc byte[6];
+            while (true)
+            {
+                int i = Interlocked.Increment(ref _i) - 1;
+                if (i >= 0x100000 || FoundHwId != null)
+                {
+                    break;
+                }
+
+                hwId[4] = Hex[i & 0xf];
+                hwId[3] = Hex[(i >> 4) & 0xf];
+                hwId[2] = Hex[(i >> 8) & 0xf];
+                hwId[1] = Hex[(i >> 12) & 0xf];
+                hwId[0] = Hex[(i >> 16) & 0xf];
+
+                hwId.AsSpan().CopyTo(hwId6);
+                hwId6[5] = hwId[0];
+                var blow = new BlowFish(hwId6);
+
+                var crcBlock = blow.DecryptCBC(_blockCrc);
+                if (crcBlock[4] != 4 || crcBlock[5] != 4 || crcBlock[6] != 4 || crcBlock[7] != 4)
+                {
+                    // Invalid CRC.
+                    continue;
+                }
+
+                uint crc = BinaryPrimitives.ReadUInt32BigEndian(crcBlock);
+                if (_crc != crc)
+                {
+                    // Invalid CRC.
+                    continue;
+                }
+
+                var ck1Block = blow.DecryptCBC(_block1);
+                if (ck1Block[5] != 3 || ck1Block[6] != 3 || ck1Block[7] != 3)
+                {
+                    // Invalid Cell Key 1.
+                    continue;
+                }
+
+                var ck2Block = blow.DecryptCBC(_block2);
+                if (ck2Block[5] != 3 || ck2Block[6] != 3 || ck2Block[7] != 3)
+                {
+                    // Invalid Cell Key 2.
+                    continue;
+                }
+
+                //ck1 = ck1Block.AsSpan(0, 5).ToArray();
+                //ck2 = ck2Block.AsSpan(0, 5).ToArray();
+                FoundHwId = hwId;
                 break;
             }
         }

@@ -24,12 +24,25 @@ namespace S63Tools
             labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
         }
 
+        private void buttonCalculateFromPermit_Click(object sender, EventArgs e)
+        {
+            if (openFileDialogPermit.ShowDialog() != DialogResult.OK)
+            {
+                return;
+            }
+
+            var hwId = S63Tools.HackCellPermit(openFileDialogPermit.FileName);
+            _hardwareId = hwId;
+            labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
+        }
+
         private void buttonDecryptCells_Click(object sender, EventArgs e)
         {
             var hwId = _hardwareId;
             if (hwId == null)
             {
                 MessageBox.Show("First decrypt the HW_ID.");
+                return;
             }
 
             var permits = new Dictionary<string, (byte[], byte[])>();
