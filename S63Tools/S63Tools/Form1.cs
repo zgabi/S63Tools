@@ -17,23 +17,41 @@ namespace S63Tools
 
         private void buttonCalculate_Click(object sender, EventArgs e)
         {
-            var hwId = S63Tools.HackUserPermit(textBoxUserPermit.Text, out var mId, out var keyBytes);
-            _hardwareId = hwId;
-            labelMId.Text = $"x{mId:X4} ({(char)(mId >> 8)}{(char)(mId & 0xff)})";
-            labelMKey.Text = Encoding.ASCII.GetString(keyBytes ?? Array.Empty<byte>());
-            labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
+            string permit = textBoxUserPermit.Text;
+
+            try
+            {
+                var hwId = S63Tools.HackUserPermit(permit, out var mId, out var keyBytes);
+                _hardwareId = hwId;
+                labelMId.Text = $"x{mId:X4} ({(char)(mId >> 8)}{(char)(mId & 0xff)})";
+                labelMKey.Text = Encoding.ASCII.GetString(keyBytes ?? Array.Empty<byte>());
+                labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
         }
 
-        private void buttonCalculateFromPermit_Click(object sender, EventArgs e)
+        private void buttonCalculateFromCellPermit_Click(object sender, EventArgs e)
         {
             if (openFileDialogPermit.ShowDialog() != DialogResult.OK)
             {
                 return;
             }
 
-            var hwId = S63Tools.HackCellPermit(openFileDialogPermit.FileName);
-            _hardwareId = hwId;
-            labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
+            try
+            {
+                var hwId = S63Tools.HackCellPermit(openFileDialogPermit.FileName);
+                _hardwareId = hwId;
+                labelMId.Text = "-";
+                labelMKey.Text = "-";
+                labelHwId.Text = Encoding.ASCII.GetString(hwId ?? Array.Empty<byte>());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
         }
 
         private void buttonDecryptCells_Click(object sender, EventArgs e)

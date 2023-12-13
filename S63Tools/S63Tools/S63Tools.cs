@@ -8,10 +8,7 @@ namespace S63Tools;
 
 public class S63Tools
 {
-    private static readonly byte[] Hex = {
-        (byte) '0', (byte) '1', (byte) '2', (byte) '3', (byte) '4', (byte) '5', (byte) '6', (byte) '7',
-        (byte) '8', (byte) '9', (byte) 'A', (byte) 'B', (byte) 'C', (byte) 'D', (byte) 'E', (byte) 'F'
-    };
+    private static readonly byte[] Hex = "0123456789ABCDEF"u8.ToArray();
 
     public static string CreateUserPermit(byte[] hwId, byte[] key, ushort mId)
     {
@@ -223,6 +220,11 @@ public class S63Tools
     public static byte[]? HackUserPermit(string userPermit, out ushort mId, out byte[]? keyBytes)
     {
         var permit = Encoding.ASCII.GetBytes(userPermit);
+        if (permit.Length < 28)
+        {
+            throw new Exception("Invalid user permit.");
+        }
+
         uint crc = Crc32.Compute(permit.AsSpan(0, 16));
 
         Utf8Parser.TryParse(permit.AsSpan(16, 8), out uint crc2, out _, 'X');
@@ -242,14 +244,14 @@ public class S63Tools
         }
 
         long t = Stopwatch.GetTimestamp();
-        var keyFinder = new KeyFinder(hwIdBlockDef);
-        keyFinder.Start();
+        var finder = new KeyFinder(hwIdBlockDef);
+        finder.FindKey();
 
         var elapsed = Stopwatch.GetElapsedTime(t);
         Debug.WriteLine("elapsed: " + elapsed);
 
-        keyBytes = keyFinder.FoundKey;
-        return keyFinder.FoundHwId;
+        keyBytes = finder.FoundKey;
+        return finder.FoundHwId;
     }
 
     public static byte[]? HackCellPermit(string permitPath)
@@ -275,27 +277,21 @@ public class S63Tools
             var permit = Encoding.ASCII.GetBytes(cellPermit);
             uint crc = Crc32.Compute(permit.AsSpan(0, 48));
 
-            Span<byte> blockCrc = stackalloc byte[8];
-            Span<byte> block1 = stackalloc byte[8];
-            Span<byte> block2 = stackalloc byte[8];
-            for (int i = 0; i < 8; i++)
+            Span<byte> blockData = stackalloc byte[24];
+            for (int i = 0; i < 24; i++)
             {
-                Utf8Parser.TryParse(permit.AsSpan(48 + i * 2, 2), out byte b, out _, 'X');
-                blockCrc[i] = b;
-                Utf8Parser.TryParse(permit.AsSpan(16 + i * 2, 2), out b, out _, 'X');
-                block1[i] = b;
-                Utf8Parser.TryParse(permit.AsSpan(32 + i * 2, 2), out b, out _, 'X');
-                block2[i] = b;
+                Utf8Parser.TryParse(permit.AsSpan(16 + i * 2, 2), out byte b, out _, 'X');
+                blockData[i] = b;
             }
 
             long t = Stopwatch.GetTimestamp();
-            var hardwareIdFinder = new HardwareIdFinder(blockCrc, block1, block2, crc);
-            hardwareIdFinder.Start();
+            var finder = new KeyFinder(blockData, crc);
+            finder.FindHardwareId();
 
             var elapsed = Stopwatch.GetElapsedTime(t);
             Debug.WriteLine("elapsed: " + elapsed);
 
-            return hardwareIdFinder.FoundHwId;
+            return finder.FoundHwId;
         }
 
         throw new Exception("Failed to decrypt the permits.");
@@ -303,18 +299,20 @@ public class S63Tools
 
     private class KeyFinder
     {
-        private readonly byte[] _hwIdBlockDef;
+        private readonly byte[] _blockData;
+        private readonly uint _crc;
         private int _i;
 
         public volatile byte[]? FoundKey;
         public volatile byte[]? FoundHwId;
 
-        public KeyFinder(Span<byte> hwIdBlockDef)
+        public KeyFinder(Span<byte> hwIdBlockDef, uint crc = 0)
         {
-            _hwIdBlockDef = hwIdBlockDef.ToArray();
+            _blockData = hwIdBlockDef.ToArray();
+            _crc = crc;
         }
 
-        private void ThreadFunc()
+        private void FindKeyThreadFunc()
         {
             var key = new byte[5];
             Span<byte> hwIdBlock = stackalloc byte[8];
@@ -336,7 +334,7 @@ public class S63Tools
 
                 blow.SetupKey5(key);
 
-                _hwIdBlockDef.CopyTo(hwIdBlock);
+                _blockData.CopyTo(hwIdBlock);
                 blow.DecryptCBC8(hwIdBlock);
 
                 if (hwIdBlock[5] != 3 || hwIdBlock[6] != 3 || hwIdBlock[7] != 3)
@@ -350,46 +348,12 @@ public class S63Tools
             }
         }
 
-        public void Start()
+        private void FindHwIdThreadFunc()
         {
-            var threads = new List<Thread>();
-            for (int i = 0; i < Environment.ProcessorCount; i++)
-            {
-                var t = new Thread(ThreadFunc);
-                threads.Add(t);
-                t.Start();
-            }
-
-            foreach (var thread in threads)
-            {
-                thread.Join();
-            }
-        }
-    }
-
-    private class HardwareIdFinder
-    {
-        private readonly byte[] _blockCrc;
-        private readonly uint _crc;
-        private readonly byte[] _block1;
-        private readonly byte[] _block2;
-        private int _i;
-
-        public volatile byte[]? FoundHwId;
-
-        public HardwareIdFinder(Span<byte> blockCrc, Span<byte> block1, Span<byte> block2, uint crc)
-        {
-            _crc = crc;
-            _blockCrc = blockCrc.ToArray();
-            _block1 = block1.ToArray();
-            _block2 = block2.ToArray();
-        }
-
-        private void ThreadFunc()
-        {
-            var hwId = new byte[5];
-
             Span<byte> hwId6 = stackalloc byte[6];
+            var block1 = _blockData.AsSpan(0, 8);
+            var block2 = _blockData.AsSpan(8, 8);
+            var blockCrc = _blockData.AsSpan(16, 8);
             while (true)
             {
                 int i = Interlocked.Increment(ref _i) - 1;
@@ -398,17 +362,16 @@ public class S63Tools
                     break;
                 }
 
-                hwId[4] = Hex[i & 0xf];
-                hwId[3] = Hex[(i >> 4) & 0xf];
-                hwId[2] = Hex[(i >> 8) & 0xf];
-                hwId[1] = Hex[(i >> 12) & 0xf];
-                hwId[0] = Hex[(i >> 16) & 0xf];
+                hwId6[4] = Hex[i & 0xf];
+                hwId6[3] = Hex[(i >> 4) & 0xf];
+                hwId6[2] = Hex[(i >> 8) & 0xf];
+                hwId6[1] = Hex[(i >> 12) & 0xf];
+                hwId6[0] = Hex[(i >> 16) & 0xf];
+                hwId6[5] = hwId6[0];
 
-                hwId.AsSpan().CopyTo(hwId6);
-                hwId6[5] = hwId[0];
                 var blow = new BlowFish(hwId6);
 
-                var crcBlock = blow.DecryptCBC(_blockCrc);
+                var crcBlock = blow.DecryptCBC(blockCrc);
                 if (crcBlock[4] != 4 || crcBlock[5] != 4 || crcBlock[6] != 4 || crcBlock[7] != 4)
                 {
                     // Invalid CRC.
@@ -422,14 +385,14 @@ public class S63Tools
                     continue;
                 }
 
-                var ck1Block = blow.DecryptCBC(_block1);
+                var ck1Block = blow.DecryptCBC(block1);
                 if (ck1Block[5] != 3 || ck1Block[6] != 3 || ck1Block[7] != 3)
                 {
                     // Invalid Cell Key 1.
                     continue;
                 }
 
-                var ck2Block = blow.DecryptCBC(_block2);
+                var ck2Block = blow.DecryptCBC(block2);
                 if (ck2Block[5] != 3 || ck2Block[6] != 3 || ck2Block[7] != 3)
                 {
                     // Invalid Cell Key 2.
@@ -438,17 +401,17 @@ public class S63Tools
 
                 //ck1 = ck1Block.AsSpan(0, 5).ToArray();
                 //ck2 = ck2Block.AsSpan(0, 5).ToArray();
-                FoundHwId = hwId;
+                FoundHwId = hwId6.Slice(0, 5).ToArray();
                 break;
             }
         }
 
-        public void Start()
+        private void Start(ThreadStart threadFunc)
         {
             var threads = new List<Thread>();
             for (int i = 0; i < Environment.ProcessorCount; i++)
             {
-                var t = new Thread(ThreadFunc);
+                var t = new Thread(threadFunc);
                 threads.Add(t);
                 t.Start();
             }
@@ -457,6 +420,16 @@ public class S63Tools
             {
                 thread.Join();
             }
+        }
+
+        public void FindKey()
+        {
+            Start(FindKeyThreadFunc);
+        }
+
+        public void FindHardwareId()
+        {
+            Start(FindHwIdThreadFunc);
         }
     }
 

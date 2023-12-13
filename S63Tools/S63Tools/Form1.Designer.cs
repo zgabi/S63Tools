@@ -41,7 +41,7 @@
             buttonDecryptCells = new Button();
             folderBrowserDialog1 = new FolderBrowserDialog();
             label5 = new Label();
-            buttonCalculateFromPermit = new Button();
+            buttonCalculateFromCellPermit = new Button();
             SuspendLayout();
             // 
             // textBoxUserPermit
@@ -148,22 +148,22 @@
             label5.TabIndex = 10;
             label5.Text = "OR";
             // 
-            // buttonCalculateFromPermit
+            // buttonCalculateFromCellPermit
             // 
-            buttonCalculateFromPermit.Location = new Point(422, 11);
-            buttonCalculateFromPermit.Name = "buttonCalculateFromPermit";
-            buttonCalculateFromPermit.Size = new Size(182, 23);
-            buttonCalculateFromPermit.TabIndex = 11;
-            buttonCalculateFromPermit.Text = "Calculate from PERMIT.TXT";
-            buttonCalculateFromPermit.UseVisualStyleBackColor = true;
-            buttonCalculateFromPermit.Click += buttonCalculateFromPermit_Click;
+            buttonCalculateFromCellPermit.Location = new Point(422, 11);
+            buttonCalculateFromCellPermit.Name = "buttonCalculateFromCellPermit";
+            buttonCalculateFromCellPermit.Size = new Size(182, 23);
+            buttonCalculateFromCellPermit.TabIndex = 11;
+            buttonCalculateFromCellPermit.Text = "Calculate from PERMIT.TXT";
+            buttonCalculateFromCellPermit.UseVisualStyleBackColor = true;
+            buttonCalculateFromCellPermit.Click += buttonCalculateFromCellPermit_Click;
             // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(800, 450);
-            Controls.Add(buttonCalculateFromPermit);
+            Controls.Add(buttonCalculateFromCellPermit);
             Controls.Add(label5);
             Controls.Add(buttonDecryptCells);
             Controls.Add(labelHwId);
@@ -176,7 +176,7 @@
             Controls.Add(label1);
             Controls.Add(textBoxUserPermit);
             Name = "Form1";
-            Text = "Form1";
+            Text = "S63 Tools";
             ResumeLayout(false);
             PerformLayout();
         }
@@ -196,6 +196,6 @@
         private Button buttonDecryptCells;
         private FolderBrowserDialog folderBrowserDialog1;
         private Label label5;
-        private Button buttonCalculateFromPermit;
+        private Button buttonCalculateFromCellPermit;
     }
 }
